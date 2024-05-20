@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login Page with HTMX and Bootstrap</title>
+    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://unpkg.com/htmx.org"></script>
+    <script src="https://unpkg.com/htmx.org@1.9.11/dist/ext/json-enc.js"></script>
+</head>
+<body>
+
+<div class="container">
+    <div class="row justify-content-center">
+        <div class="col-md-6">
+            <h2 class="mt-5 mb-3">Login</h2>
+            <form id="loginForm" hx-post="/notes/add"
+                  hx-target="#loginResponse" hx-swap="outerHTML" hx-ext="json-enc" >
+                <div class="form-group">
+                    <label for="title">Title</label>
+                    <input type="title" class="form-control" id="title" name="title" placeholder="Enter Title" required>
+                </div>
+                <div class="form-group">
+                    <label for="content">Content</label>
+                    <input type="content" class="form-control" id="content" name="content" placeholder="Note" required>
+                </div>
+                <button type="submit" class="btn btn-primary">Submit</button>
+            </form>
+            
+            <div id="loginResponse"></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

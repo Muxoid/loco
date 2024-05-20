@@ -1,15 +1,12 @@
 use std::path::Path;
 
 use async_trait::async_trait;
-use loco_extras;
 use loco_rs::{
     app::{AppContext, Hooks, Initializer},
     boot::{create_app, BootResult, StartMode},
-    config::Config,
     controller::AppRoutes,
     db::{self, truncate_table},
     environment::Environment,
-    storage::{self, Storage},
     task::Tasks,
     worker::{AppWorker, Processor},
     Result,
@@ -18,9 +15,7 @@ use migration::Migrator;
 use sea_orm::DatabaseConnection;
 
 use crate::{
-    controllers,
-    controllers::middlewares,
-    initializers,
+    controllers, initializers,
     models::_entities::{notes, users},
     tasks,
     workers::downloader::DownloadWorker,
@@ -29,6 +24,10 @@ use crate::{
 pub struct App;
 #[async_trait]
 impl Hooks for App {
+    fn app_name() -> &'static str {
+        env!("CARGO_CRATE_NAME")
+    }
+
     fn app_version() -> String {
         format!(
             "{} ({})",
@@ -39,58 +38,22 @@ impl Hooks for App {
         )
     }
 
-    fn app_name() -> &'static str {
-        env!("CARGO_CRATE_NAME")
-    }
-
-    async fn initializers(ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
-        let mut initializers: Vec<Box<dyn Initializer>> = vec![
-            Box::new(initializers::axum_session::AxumSessionInitializer),
-            Box::new(initializers::view_engine::ViewEngineInitializer),
-            Box::new(initializers::hello_view_engine::HelloViewEngineInitializer),
-            Box::new(loco_extras::initializers::normalize_path::NormalizePathInitializer),
-        ];
-
-        if ctx.environment != Environment::Test {
-            initializers.push(Box::new(
-                loco_extras::initializers::prometheus::AxumPrometheusInitializer,
-            ));
-        }
-
-        Ok(initializers)
-    }
-
-    fn routes(ctx: &AppContext) -> AppRoutes {
-        AppRoutes::with_default_routes()
-            .add_route(
-                controllers::mylayer::routes(ctx.clone())
-                    .layer(middlewares::routes::role::RoleRouteLayer::new(ctx.clone())),
-            )
-            .add_route(controllers::notes::routes())
-            .add_route(controllers::auth::routes())
-            .add_route(controllers::mysession::routes())
-            .add_route(controllers::dashboard::routes())
-            .add_route(controllers::user::routes())
-            .add_route(controllers::upload::routes())
-            .add_route(controllers::responses::routes())
-    }
-
     async fn boot(mode: StartMode, environment: &Environment) -> Result<BootResult> {
         create_app::<Self, Migrator>(mode, environment).await
     }
 
-    async fn storage(
-        _config: &Config,
-        environment: &Environment,
-    ) -> Result<Option<storage::Storage>> {
-        let store = if environment == &Environment::Test {
-            storage::drivers::mem::new()
-        } else {
-            storage::drivers::local::new_with_prefix("storage-uploads").map_err(Box::from)?
-        };
+    async fn initializers(_ctx: &AppContext) -> Result<Vec<Box<dyn Initializer>>> {
+        Ok(vec![Box::new(
+            initializers::view_engine::ViewEngineInitializer,
+        )])
+    }
 
-        let storage = Storage::single(store);
-        return Ok(Some(storage));
+    fn routes(_ctx: &AppContext) -> AppRoutes {
+        AppRoutes::with_default_routes()
+            .add_route(controllers::home::routes())
+            .add_route(controllers::notes::routes())
+            .add_route(controllers::auth::routes())
+            .add_route(controllers::user::routes())
     }
 
     fn connect_workers<'a>(p: &'a mut Processor, ctx: &'a AppContext) {
@@ -98,9 +61,7 @@ impl Hooks for App {
     }
 
     fn register_tasks(tasks: &mut Tasks) {
-        tasks.register(tasks::user_report::UserReport);
         tasks.register(tasks::seed::SeedData);
-        tasks.register(tasks::foo::Foo);
     }
 
     async fn truncate(db: &DatabaseConnection) -> Result<()> {

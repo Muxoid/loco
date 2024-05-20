@@ -1,5 +1,15 @@
-use loco_rs::{controller::bad_request, prelude::*};
+use axum::{
+    debug_handler,
+    http::{
+        header::{HeaderMap, HeaderValue},
+        StatusCode,
+    },
+    response::AppendHeaders,
+};
+use cookie::Cookie;
+use loco_rs::prelude::*;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::{
     mailers::auth::AuthMailer,
@@ -7,8 +17,8 @@ use crate::{
         _entities::users,
         users::{LoginParams, RegisterParams},
     },
-    views::auth::UserSession,
-};
+    views::{self},
+}; // Make sure to import the `json!` macro
 #[derive(Debug, Deserialize, Serialize)]
 pub struct VerifyParams {
     pub token: String,
@@ -25,21 +35,32 @@ pub struct ResetParams {
     pub password: String,
 }
 
+pub async fn render_register(ViewEngine(v): ViewEngine<TeraView>) -> Result<impl IntoResponse> {
+    views::auth::get_register(v)
+}
+
 /// Register function creates a new user with the given parameters and sends a
 /// welcome email to the user
+#[debug_handler]
 async fn register(
     State(ctx): State<AppContext>,
+    ViewEngine(v): ViewEngine<TeraView>,
     Json(params): Json<RegisterParams>,
-) -> Result<Response> {
+) -> Result<impl IntoResponse> {
     let res = users::Model::create_with_password(&ctx.db, &params).await;
+
+    let mut headers = HeaderMap::new();
 
     let user = match res {
         Ok(user) => user,
         Err(err) => {
-            let msg = "could not register user";
-
-            tracing::info!(message = err.to_string(), user_email = &params.email, msg,);
-            return bad_request(msg);
+            tracing::info!(
+                message = err.to_string(),
+                user_email = &params.email,
+                "could not register user",
+            );
+            headers.insert("HX-Redirect", HeaderValue::from_static("/auth/register"));
+            return views::auth::post_register(v, headers, "htmx/err/register_err.html");
         }
     };
 
@@ -50,12 +71,8 @@ async fn register(
 
     AuthMailer::send_welcome(&ctx, &user).await?;
 
-    let jwt_secret = ctx.config.get_jwt_config()?;
-
-    let token = user
-        .generate_jwt(&jwt_secret.secret, &jwt_secret.expiration)
-        .or_else(|_| unauthorized("unauthorized!"))?;
-    format::json(UserSession::new(&user, &token))
+    headers.insert("HX-Redirect", HeaderValue::from_static("/auth/login"));
+    views::auth::post_register(v, headers, "")
 }
 
 /// Verify register user. if the user not verified his email, he can't login to
@@ -74,7 +91,7 @@ async fn verify(
         tracing::info!(pid = user.pid.to_string(), "user verified");
     }
 
-    format::empty_json()
+    format::json(())
 }
 
 /// In case the user forgot his password  this endpoints generate a forgot token
@@ -88,7 +105,7 @@ async fn forgot(
     let Ok(user) = users::Model::find_by_email(&ctx.db, &params.email).await else {
         // we don't want to expose our users email. if the email is invalid we still
         // returning success to the caller
-        return format::empty_json();
+        return format::json(());
     };
 
     let user = user
@@ -98,7 +115,7 @@ async fn forgot(
 
     AuthMailer::forgot_password(&ctx, &user).await?;
 
-    format::empty_json()
+    format::json(())
 }
 
 /// reset user password by the given parameters
@@ -108,23 +125,40 @@ async fn reset(State(ctx): State<AppContext>, Json(params): Json<ResetParams>) -
         // returning success to the caller
         tracing::info!("reset token not found");
 
-        return format::empty_json();
+        return format::json(());
     };
     user.into_active_model()
         .reset_password(&ctx.db, &params.password)
         .await?;
 
-    format::empty_json()
+    format::json(())
+}
+
+pub async fn render_login(ViewEngine(v): ViewEngine<TeraView>) -> Result<impl IntoResponse> {
+    views::auth::get_login(v)
 }
 
 /// Creates a user login and returns a token
-async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -> Result<Response> {
-    let user = users::Model::find_by_email(&ctx.db, &params.email).await?;
+async fn login(
+    State(ctx): State<AppContext>,
+    ViewEngine(v): ViewEngine<TeraView>,
+    Json(params): Json<LoginParams>,
+) -> Result<impl IntoResponse> {
+    let get_user = users::Model::find_by_email(&ctx.db, &params.email).await;
+
+    let mut headers = HeaderMap::new();
+    let user = match get_user {
+        Ok(user) => user,
+        Err(_) => {
+            // Log the error or handle it appropriately here
+            return views::auth::post_login(v, headers, "htmx/err/login_err.html");
+        }
+    };
 
     let valid = user.verify_password(&params.password);
 
     if !valid {
-        return unauthorized("unauthorized!");
+        return views::auth::post_login(v, headers, "htmx/err/login_err.html");
     }
 
     let jwt_secret = ctx.config.get_jwt_config()?;
@@ -133,15 +167,24 @@ async fn login(State(ctx): State<AppContext>, Json(params): Json<LoginParams>) -
         .generate_jwt(&jwt_secret.secret, &jwt_secret.expiration)
         .or_else(|_| unauthorized("unauthorized!"))?;
 
-    format::json(UserSession::new(&user, &token))
+    headers.insert("HX-Redirect", HeaderValue::from_static("/home"));
+
+    let cookie_value = format!(
+        "{}={}; HttpOnly; Path=/",
+        "loco_cookie_key".to_string(),
+        token
+    );
+    headers.insert("Set-Cookie", HeaderValue::from_str(&cookie_value).unwrap());
+
+    views::auth::post_login(v, headers, "auth/login.html")
 }
 
 pub fn routes() -> Routes {
     Routes::new()
         .prefix("auth")
-        .add("/register", post(register))
+        .add("/register", post(register).get(render_register))
         .add("/verify", post(verify))
-        .add("/login", post(login))
+        .add("/login", post(login).get(render_login))
         .add("/forgot", post(forgot))
         .add("/reset", post(reset))
 }

@@ -9,7 +9,8 @@
 //! ```
 //!
 //! To override existing data and reset the data structure, use the following
-//! command with the `refresh:true` argument: ```sh
+//! command with the `refresh:true` argument:
+//! ```sh
 //! cargo run task seed_data refresh:true
 //! ```
 use std::collections::BTreeMap;
@@ -29,6 +30,7 @@ impl Task for SeedData {
             detail: "Task for seeding data".to_string(),
         }
     }
+
     async fn run(&self, app_context: &AppContext, vars: &BTreeMap<String, String>) -> Result<()> {
         let refresh = vars.get("refresh").is_some_and(|refresh| refresh == "true");
 
